@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <stdlib.h> // for atoi
+#include <stdint.h> // for uint64_t
 #include <errno.h>
 #include <fcntl.h> // for open
 #include <unistd.h> // for close
@@ -18,13 +19,15 @@
 #define unlikely(x)	__builtin_expect (!!(x), 0)
 
 #define MAX_BUF 64
+#define NS_PER_SEC 1000000
+#define PERIOD_OFFSET 3
 
 #define EQEP_BASE0 "/sys/devices/platform/ocp/48300000.epwmss/48300180.eqep"
 #define EQEP_BASE1 "/sys/devices/platform/ocp/48302000.epwmss/48302180.eqep"
 #define EQEP_BASE2 "/sys/devices/platform/ocp/48304000.epwmss/48304180.eqep"
 
 
-static int fd[3]; //store file descriptors for 3 position files
+static int fd[3+PERIOD_OFFSET]; //store file descriptors for 3 position files
 static int init_flag = 0; // boolean to check if mem mapped
 
 
@@ -58,6 +61,13 @@ int rc_encoder_eqep_init(void)
 		return -1;
 	}
 	fd[0]=temp_fd;
+	temp_fd = open(EQEP_BASE0 "/period", O_RDWR);
+	if (temp_fd<0) {
+		perror("ERROR in rc_encoder_eqep_init, failed to open device driver");
+		fprintf(stderr, "Perhaps kernel or device tree is too old\n");
+		return -1;
+	}
+	fd[0 + PERIOD_OFFSET] = temp_fd;
 
 	// subsystem 1
 	temp_fd = open(EQEP_BASE1 "/enabled", O_WRONLY);
@@ -81,7 +91,14 @@ int rc_encoder_eqep_init(void)
 		perror("ERROR in rc_encoder_eqep_init, failed to zero out position");
 		return -1;
 	}
-	fd[1]=temp_fd;
+	fd[1] = temp_fd;
+	temp_fd = open(EQEP_BASE1 "/period", O_RDWR);
+	if (temp_fd<0) {
+		perror("ERROR in rc_encoder_eqep_init, failed to open device driver");
+		fprintf(stderr, "Perhaps kernel or device tree is too old\n");
+		return -1;
+	}
+	fd[1 + PERIOD_OFFSET] = temp_fd;
 
 	// subsystem 0
 	temp_fd = open(EQEP_BASE2 "/enabled", O_WRONLY);
@@ -105,8 +122,14 @@ int rc_encoder_eqep_init(void)
 		perror("ERROR in rc_encoder_eqep_init, failed to zero out position");
 		return -1;
 	}
-	fd[2]=temp_fd;
-
+	fd[2] = temp_fd;
+	temp_fd = open(EQEP_BASE1 "/period", O_RDWR);
+	if (temp_fd<0) {
+		perror("ERROR in rc_encoder_eqep_init, failed to open device driver");
+		fprintf(stderr, "Perhaps kernel or device tree is too old\n");
+		return -1;
+	}
+	fd[2 + PERIOD_OFFSET] = temp_fd;
 
 
 	init_flag = 1;
@@ -116,7 +139,7 @@ int rc_encoder_eqep_init(void)
 int rc_encoder_eqep_cleanup(void)
 {
 	int i;
-	for(i=0;i<3;i++){
+	for(i=0;i<3+PERIOD_OFFSET;i++){
 		close(fd[i]);
 	}
 	init_flag = 0;
@@ -183,4 +206,62 @@ int rc_encoder_eqep_write(int ch, int pos)
 	return 0;
 }
 
+int rc_encoder_eqep_get_period(int ch) {
 
+	char buf[22];
+
+	//sanity checks
+	if (unlikely(!init_flag)) {
+		fprintf(stderr, "ERROR in rc_encoder_eqep_get_period, please initialize with rc_encoder_eqep_init() first\n");
+		return -1;
+	}
+	if (unlikely(ch == 4)) {
+		fprintf(stderr, "ERROR in rc_encoder_eqep_get_period, channel 4 is read by the PRU, use rc_encoder_pru_write instead\n");
+		return -1;
+	}
+	if (unlikely(ch<1 || ch>3)) {
+		fprintf(stderr, "ERROR: in rc_encoder_eqep_get_period, encoder channel must be between 1 & 3 inclusive\n");
+		return -1;
+	}
+	if (unlikely(lseek(fd[(ch-1)+PERIOD_OFFSET], 0, SEEK_SET)<0)) {
+		perror("ERROR: in rc_encoder_eqep_get_period, failed to seek to beginning of fd");
+		return -1;
+	}
+	if (unlikely(read(fd[(ch-1)+PERIOD_OFFSET], buf, sizeof(buf)) == -1)) {
+		perror("ERROR in rc_encoder_eqep_read, can't read period fd");
+		return -1;
+	}
+	return atoi(buf) / NS_PER_SEC;
+}
+
+
+int rc_encoder_eqep_set_period(int ch, int per) {
+
+	uint64_t period_ns;
+	char buf[22];
+	period_ns = per * NS_PER_SEC;
+
+	//sanity checks
+	if (unlikely(!init_flag)) {
+		fprintf(stderr, "ERROR in rc_encoder_eqep_set_period, please initialize with rc_encoder_eqep_init() first\n");
+		return -1;
+	}
+	if (unlikely(ch == 4)) {
+		fprintf(stderr, "ERROR in rc_encoder_eqep_set_period, channel 4 is read by the PRU, use rc_encoder_pru_write instead\n");
+		return -1;
+	}
+	if (unlikely(ch<1 || ch>3)) {
+		fprintf(stderr, "ERROR: in rc_encoder_eqep_set_period, encoder channel must be between 1 & 3 inclusive\n");
+		return -1;
+	}
+	if (unlikely(lseek(fd[(ch-1)+PERIOD_OFFSET], 0, SEEK_SET)<0)) {
+		perror("ERROR: in rc_encoder_eqep_set_period, failed to seek to beginning of fd");
+		return -1;
+	}
+	snprintf(buf, sizeof(buf), "%llu", period_ns);
+	if (write(fd[(ch-1)+PERIOD_OFFSET], buf, sizeof(buf)) == -1) {
+		perror("ERROR in rc_encoder_eqep_init, failed set sampling period");
+		return -1;
+	}
+	return 0;
+}

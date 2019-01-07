@@ -69,6 +69,26 @@ int rc_encoder_eqep_read(int ch);
  */
 int rc_encoder_eqep_write(int ch, int pos);
 
+/**
+* @brief      Reads the sampling period of an encoder channel.
+*
+*
+* @param[in]  ch    channel 1-3
+*
+* @return     The sampling period an integer or -1 and prints an
+* error message is there is a problem.
+*/
+int rc_encoder_eqep_get_period(int ch);
+
+/**
+* @brief      Sets the sampling period in milliseconds of an eQEP encoder channel.
+*
+* @param[in]  ch    channel 1-3
+* @param[in]  per   Period (in milliseconds)
+*
+* @return     0 on success, -1 on failure
+*/
+int rc_encoder_eqep_set_period(int ch, int per);
 
 #ifdef __cplusplus
 }
